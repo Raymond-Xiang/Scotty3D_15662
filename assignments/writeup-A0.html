@@ -1,6 +1,6 @@
 **Assignment 0 Report**
 
-AndrewID: XXXX
+AndrewID: peiranx
 
 (##) About this template
 
@@ -14,36 +14,36 @@ AndrewID: XXXX
 
 Step 1: Clone
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step1-github-ref-1.png" alt="Github-CLI">
+    <img src="A0-writeup/my_ans/A0T1_github_repo.png" alt="Github-CLI">
 </div>
 or
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step1-github-ref-2.png" alt="Github-Web">
+    <img src="A0-writeup/my_ans/A0T1_github_clone.png" alt="Github-Web">
 </div>
 
 Step 2: General Setup
 
 Visual Studio:
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step2-vs-ref.png" alt="Visual Studio">
+    <img src="A0-writeup/my_ans/A0T1_VS.png" alt="Visual Studio">
 </div>
 
 Node:
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step2-node-ref.png" alt="Node">
+    <img src="A0-writeup/my_ans/A0T1_node.png" alt="Node">
 </div>
 
 Nest-libs:
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step2-nest-libs-ref.png" alt="Nest-libs">
+    <img src="A0-writeup/my_ans/A0T1_nest.png" alt="Nest-libs">
 </div>
 
 Step 3: Build and Run
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step3-GUI-ref.png" alt="GUI">
+    <img src="A0-writeup/my_ans/A0T1_scotty.png" alt="GUI">
 </div>
 <div class="twentytwenty-container">
-    <img src="A0-writeup/reference/step3-tests-ref.png" alt="Run-tests">
+    <img src="A0-writeup/my_ans/A0T1_testcase.png" alt="Run-tests">
 </div>
 
 (##) A0T2
@@ -54,13 +54,20 @@ For each of the problems you solved in task 2, characterise the bug in your own 
 type of bug.
 
 Problem 1:
+String is supposed to be Std::string instead. Cout was written as "Cour". A semi-colon is missing on the line of the print statement.
+These typos could be easily reproduced in any scenario.
 
 Problem 2:
+The lambda function should perform a floating point division but it does integer division, so some precision is lost by mistake. 
+It can also happen in floating point multiplication.  
 
 Problem 3:
+end() of a std::vector does not point to an actual element. The last element (which the problem tries to fetch) is located at one iteration before the end().
+It could also happen when someone tries to traverse a vector and treats end() as actual element and do operations on this "element".
 
 Problem 4:
-
+The if statement contains a three-way comparison which is written incorrectly. 
+Another scenario is ((a > b) > c) which equals to (true or false) > c which is not what we wanted.
 
 (##) A0T3
 
@@ -69,10 +76,15 @@ You do not need any screenshots for this task. Your completion will be graded ba
 (##) GenAI Use
 
 Which model(s) did you use (e.g., ChatGPT-4, Claude-2, etc.)?
+I used deepseek.
 
 For what purpose(s) did you use GenAI (e.g., brainstorming, code generation, debugging, etc.)?
+I wanted it to help me understand the concept of half edges,  vertices, etc.
+
 
 What was it good at? What was it bad at?
+It is good at explaining concepts in an intuitive manner. But it is not as good at trying to diagnose the errors in the code. 
+
 
 (##) Feedback
 

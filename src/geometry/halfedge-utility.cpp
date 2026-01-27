@@ -854,6 +854,7 @@ Halfedge_Mesh Halfedge_Mesh::from_indexed_faces(std::vector< Vec3 > const &verti
 		add_loop(loop, true);
 	}
 
+	
 	//with boundary faces created, mesh should be ready to go with all edges nicely twinned.
 
 	//PARANOIA: this should never happen:
