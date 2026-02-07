@@ -142,6 +142,13 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 			// "Less" means the depth test passes when the new fragment has depth less than the stored depth.
 			// A1T4: Depth_Less
 			// TODO: implement depth test! We want to only emit fragments that have a depth less than the stored depth, hence "Depth_Less".
+			
+			// if this fragment is deeper than the depth in frame buffer (i.e. what we have drawn so far)
+			// it will not be displayed
+			if (f.fb_position.z >= fb_depth) {
+        		continue; 
+			}
+			//otherwise, go ahead
 		} else {
 			static_assert((flags & PipelineMask_Depth) <= Pipeline_Depth_Always, "Unknown depth test flag.");
 		}
@@ -164,12 +171,18 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Add) {
 				// A1T4: Blend_Add
 				// TODO: framebuffer color should have fragment color multiplied by fragment opacity added to it.
-				fb_color = sf.color; //<-- replace this line
+				
+				//NOTE: DON'T USE += OVER HERE!
+				// Blend add: if depth check tells me to display something, I just add it on top of frame buffer
+				fb_color = fb_color + sf.color * sf.opacity;
 			} else if constexpr ((flags & PipelineMask_Blend) == Pipeline_Blend_Over) {
 				// A1T4: Blend_Over
 				// TODO: set framebuffer color to the result of "over" blending (also called "alpha blending") the fragment color over the framebuffer color, using the fragment's opacity
 				// 		 You may assume that the framebuffer color has its alpha premultiplied already, and you just want to compute the resulting composite color
-				fb_color = sf.color; //<-- replace this line
+
+				//if depth check tells me to display something, I add ...
+				//this fragment's color and opacity on top of current colors, but I have blocked some of the previous colors
+				fb_color = sf.color * sf.opacity + fb_color * (1.0f - sf.opacity);
 			} else {
 				static_assert((flags & PipelineMask_Blend) <= Pipeline_Blend_Over, "Unknown blending flag.");
 			}
@@ -348,28 +361,271 @@ void Pipeline<p, P, flags>::clip_triangle(
  *
  * If you wish to work in fixed point, check framebuffer.h for useful information about the framebuffer's dimensions.
  */
+
+static inline int sgnf(float v, float eps = 1e-6f) {
+    if (v > eps) return 1;
+    if (v < -eps) return -1;
+    return 0;
+}
+
 template<PrimitiveType p, class P, uint32_t flags>
 void Pipeline<p, P, flags>::rasterize_line(
-	ClippedVertex const& va, ClippedVertex const& vb,
-	std::function<void(Fragment const&)> const& emit_fragment) {
-	if constexpr ((flags & PipelineMask_Interp) != Pipeline_Interp_Flat) {
-		assert(0 && "rasterize_line should only be invoked in flat interpolation mode.");
-	}
-	// A1T2: rasterize_line
+    ClippedVertex const& va, ClippedVertex const& vb,
+    std::function<void(Fragment const&)> const& emit_fragment) {
+    if constexpr ((flags & PipelineMask_Interp) != Pipeline_Interp_Flat) {
+        assert(0 && "rasterize_line should only be invoked in flat interpolation mode.");
+    }
+    
+	//A1T2
+    
+	//some helper functions first
+	// check if point p is inside the inscribed diamond of pixel point (px,py)
+	// rule of thumb: to be inside the diamond, its L1-norm can't be more than 0.5 
+	auto in_diamond = [](Vec2 p, int px, int py) -> bool {
+		const float EPS = 1e-6f;
+		float cx = px + 0.5f;
+		float cy = py + 0.5f;
+		float lx = p.x - cx;
+		float ly = p.y - cy;
+		float sum = std::abs(lx) + std::abs(ly);
 
-	// TODO: Check out the block comment above this function for more information on how to fill in
-	// this function!
-	// The OpenGL specification section 3.5 may also come in handy.
+		if (sum < 0.5f - EPS) return true;
+		if (sum > 0.5f + EPS) return false;
 
-	{ // As a placeholder, draw a point in the middle of the line:
-		//(remove this code once you have a real implementation)
-		Fragment mid;
-		mid.fb_position = (va.fb_position + vb.fb_position) / 2.0f;
-		mid.attributes = va.attributes;
-		mid.derivatives.fill(Vec2(0.0f, 0.0f));
-		emit_fragment(mid);
-	}
+		if (std::abs(sum - 0.5f) <= EPS) {
+			// left boundary (lx == -0.5)
+			if (std::abs(lx + 0.5f) <= EPS) return true;
+			// bottom boundary (ly == -0.5)
+			if (std::abs(ly + 0.5f) <= EPS) return true;
+			// otherwise it's top or right boundary -> exclude
+			return false;
+		}
+		return false;
+	};
 
+	// AB X AC
+	auto orient = [](const Vec2 &a, const Vec2 &b, const Vec2 &c) -> float {
+		return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+	};
+
+	// check if point P lies directly on AB
+	auto on_segment = [&](const Vec2 &a, const Vec2 &b, const Vec2 &p) -> bool {
+		const float EPS = 1e-6f;
+		if (std::abs(orient(a,b,p)) > EPS) return false;
+		// check bounding box
+		if ( (p.x + EPS) < std::min(a.x,b.x) || (p.x - EPS) > std::max(a.x,b.x) ) return false;
+		if ( (p.y + EPS) < std::min(a.y,b.y) || (p.y - EPS) > std::max(a.y,b.y) ) return false;
+		return true;
+	};
+
+	// Check segment-segment intersection (returns true if proper intersection or touching)
+	auto seg_intersect = [&](const Vec2 &a, const Vec2 &b, const Vec2 &c, const Vec2 &d) -> bool {
+		const float EPS = 1e-6f;
+		float o1 = orient(a,b,c);
+		float o2 = orient(a,b,d);
+		float o3 = orient(c,d,a);
+		float o4 = orient(c,d,b);
+
+		int s1 = sgnf(o1, EPS), s2 = sgnf(o2, EPS), s3 = sgnf(o3, EPS), s4 = sgnf(o4, EPS);
+
+		if (s1 * s2 < 0 && s3 * s4 < 0) return true; // proper intersection
+
+		// colinear / endpoint cases:
+		if (s1 == 0 && on_segment(a,b,c)) return true;
+		if (s2 == 0 && on_segment(a,b,d)) return true;
+		if (s3 == 0 && on_segment(c,d,a)) return true;
+		if (s4 == 0 && on_segment(c,d,b)) return true;
+		return false;
+	};
+
+	// Check if our segment-of-interest exits the inscribed diamond
+	auto exits_diamond = [&](Vec2 start, Vec2 end, int pixel_x, int pixel_y) -> bool {
+		// pixel center
+		float cx = pixel_x + 0.5f;
+		float cy = pixel_y + 0.5f;
+
+		// quick endpoints-in-diamond test (with tie-rule)
+		bool in0 = in_diamond(start, pixel_x, pixel_y);
+		bool in1 = in_diamond(end, pixel_x, pixel_y);
+
+		if (in0 != in1) {
+			// one in one out -> exit/enter happened
+			// I'm not sure if we HAVE TO point outwards in order to "exit" the diamond
+			// What if the end point is inside?
+			// still call it true here
+			return true;
+		}
+		if (in0 && in1) {
+			// both inside -> no exit
+			return false;
+		}
+		// both outside -> check if segment crosses diamond edges
+		// diamond vertices (in screen coords)
+		Vec2 top   = Vec2(cx, cy + 0.5f);
+		Vec2 right = Vec2(cx + 0.5f, cy);
+		Vec2 bot   = Vec2(cx, cy - 0.5f);
+		Vec2 left  = Vec2(cx - 0.5f, cy);
+
+		// four edges in CCW order: top->right, right->bot, bot->left, left->top
+		// If the segment intersects ANY of those edges, then it enters/exits the diamond (covers).
+		// For tie-rule: intersections located exactly on top/right edges that are "excluded" still
+		// represent a touch; but if the segment only touches at a single excluded point and does not pass through,
+		// returning true is conservative but acceptable. If you want strict exclusion of top/right single-touch,
+		// add extra checks below.
+
+		if (seg_intersect(start, end, top, right)) return true;
+		if (seg_intersect(start, end, right, bot)) return true;
+		if (seg_intersect(start, end, bot, left)) return true;
+		if (seg_intersect(start, end, left, top)) return true;
+
+		return false;
+	};
+    
+	//Work with start & end points first, they don't work well with Bresenham
+    Vec2 start_pos = va.fb_position.xy();
+    Vec2 end_pos = vb.fb_position.xy();
+    
+    int start_pixel_x = static_cast<int>(std::floor(start_pos.x));
+    int start_pixel_y = static_cast<int>(std::floor(start_pos.y));
+
+	//Maybe starting point exits that diamond?
+    if (exits_diamond(start_pos, end_pos, start_pixel_x, start_pixel_y)) {
+        Fragment frag;
+        frag.fb_position = Vec3(start_pixel_x + 0.5f, start_pixel_y + 0.5f, va.fb_position.z);
+        frag.attributes = va.attributes;
+        frag.derivatives.fill(Vec2(0.0f, 0.0f));
+        emit_fragment(frag);
+    }
+    
+	//Maybe ending point exits that diamond?
+    int end_pixel_x = static_cast<int>(std::floor(end_pos.x));
+    int end_pixel_y = static_cast<int>(std::floor(end_pos.y));
+    if (exits_diamond(end_pos, start_pos, end_pixel_x, end_pixel_y)) {
+        Fragment frag;
+        frag.fb_position = Vec3(end_pixel_x + 0.5f, end_pixel_y + 0.5f, vb.fb_position.z);
+        frag.attributes = va.attributes;
+        frag.derivatives.fill(Vec2(0.0f, 0.0f));
+        emit_fragment(frag);
+    }
+    
+	//Every pixel in between - we solve it using Bresenham
+    ClippedVertex start = va;
+    ClippedVertex end = vb;
+    
+    if(start.fb_position.x > end.fb_position.x){
+        std::swap(start, end);
+    }
+    
+    float dx = end.fb_position.x - start.fb_position.x;
+    float dy = end.fb_position.y - start.fb_position.y;
+    float dz = end.fb_position.z - start.fb_position.z;
+    
+    bool steep = std::abs(dy) > std::abs(dx);
+    
+    if (steep) {
+        if (start.fb_position.y > end.fb_position.y) {
+            std::swap(start, end);
+            dx = -dx;
+            dy = -dy;
+            dz = -dz;
+        }
+        
+        dx = end.fb_position.x - start.fb_position.x;
+        dy = end.fb_position.y - start.fb_position.y;
+        dz = end.fb_position.z - start.fb_position.z;
+        
+        if (dy != 0) {
+            int x0 = static_cast<int>(std::floor(start.fb_position.x));
+            int y0 = static_cast<int>(std::floor(start.fb_position.y));
+            int x1 = static_cast<int>(std::floor(end.fb_position.x));
+            int y1 = static_cast<int>(std::floor(end.fb_position.y));
+            
+            int dx_int = x1 - x0;
+            int dy_int = y1 - y0;
+            
+			//Skip the pixel containing starting and ending points (cuz they're alread dealt with!)
+            if (dx_int == 0) {
+                for (int y = y0 + 1; y < y1; y++) {
+                    Fragment frag;
+                    frag.fb_position.x = x0 + 0.5f;
+                    frag.fb_position.y = y + 0.5f;
+                    float t = static_cast<float>(y - y0) / dy_int;
+                    frag.fb_position.z = start.fb_position.z + t * dz;
+                    frag.attributes = va.attributes;
+                    frag.derivatives.fill(Vec2(0.0f, 0.0f));
+                    emit_fragment(frag);
+                }
+            } else {
+                int decision = 2 * std::abs(dx_int) - dy_int;
+                int x_step = (dx_int > 0) ? 1 : -1;
+                int x = x0;
+                
+                for (int y = y0 + 1; y < y1; y++) {
+                    Fragment frag;
+                    frag.fb_position.x = x + 0.5f;
+                    frag.fb_position.y = y + 0.5f;
+                    float t = static_cast<float>(y - y0) / dy_int;
+                    frag.fb_position.z = start.fb_position.z + t * dz;
+                    frag.attributes = va.attributes;
+                    frag.derivatives.fill(Vec2(0.0f, 0.0f));
+                    emit_fragment(frag);
+                    
+                    if (decision >= 0) {
+                        x += x_step;
+                        decision -= 2 * dy_int;
+                    }
+                    decision += 2 * std::abs(dx_int);
+                }
+            }
+        }
+    } else {
+        if (dx != 0) {
+            int x0 = static_cast<int>(std::floor(start.fb_position.x));
+            int y0 = static_cast<int>(std::floor(start.fb_position.y));
+            int x1 = static_cast<int>(std::floor(end.fb_position.x));
+            int y1 = static_cast<int>(std::floor(end.fb_position.y));
+            
+            int dx_int = x1 - x0;
+            int dy_int = y1 - y0;
+            int y_step = (dy_int > 0) ? 1 : -1;
+            
+            if (dy_int == 0) {
+				for (int x = x0; x <= x1; x++) {
+					//Skip the pixel containing starting and ending points (cuz they're alread dealt with!)
+					if (x == x0 || x == x1) continue;
+                    
+                    Fragment frag;
+                    frag.fb_position.x = x + 0.5f;
+                    frag.fb_position.y = y0 + 0.5f;
+                    float t = static_cast<float>(x - x0) / dx_int;
+                    frag.fb_position.z = start.fb_position.z + t * dz;
+                    frag.attributes = va.attributes;
+                    frag.derivatives.fill(Vec2(0.0f, 0.0f));
+                    emit_fragment(frag);
+                }
+            } else {
+                int decision = 2 * std::abs(dy_int) - dx_int;
+                int y = y0;
+                
+                for (int x = x0 + 1; x < x1; x++) {
+                    Fragment frag;
+                    frag.fb_position.x = x + 0.5f;
+                    frag.fb_position.y = y + 0.5f;
+                    float t = static_cast<float>(x - x0) / dx_int;
+                    frag.fb_position.z = start.fb_position.z + t * dz;
+                    frag.attributes = va.attributes;
+                    frag.derivatives.fill(Vec2(0.0f, 0.0f));
+                    emit_fragment(frag);
+                    
+                    if (decision >= 0) {
+                        y += y_step;
+                        decision -= 2 * dx_int;
+                    }
+                    decision += 2 * std::abs(dy_int);
+                }
+            }
+        }
+    }
 }
 
 /*
@@ -420,12 +676,96 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 	if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Flat) {
 		// A1T3: flat triangles
 		// TODO: rasterize triangle (see block comment above this function).
+		        // screen-space positions
+        float ax = va.fb_position.x, ay = va.fb_position.y, az = va.fb_position.z;
+        float bx = vb.fb_position.x, by = vb.fb_position.y, bz = vb.fb_position.z;
+        float cx = vc.fb_position.x, cy = vc.fb_position.y, cz = vc.fb_position.z;
 
-		// As a placeholder, here's code that draws some lines:
-		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(va, vb, emit_fragment);
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vb, vc, emit_fragment);
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
+        // compute axis-aligned integer bounding box (pixel indices)
+        int min_x = static_cast<int>(std::floor(std::min({ax, bx, cx})));
+        int max_x = static_cast<int>(std::floor(std::max({ax, bx, cx})));
+        int min_y = static_cast<int>(std::floor(std::min({ay, by, cy})));
+        int max_y = static_cast<int>(std::floor(std::max({ay, by, cy})));
+
+        // small epsilon for float comparisons
+        const float EPS = 1e-6f;
+
+        // edge function: edge(a,b,p) >0 means p is on left side of AB (given our convention)
+		// AB X AP
+        auto edge = [&](float ax_, float ay_, float bx_, float by_, float px, float py) -> float {
+            return (px - ax_) * (by_ - ay_) - (py - ay_) * (bx_ - ax_);
+        };
+
+        // compute signed area (used to determine orientation)
+        float area = edge(ax, ay, bx, by, cx, cy);
+        if (std::abs(area) < EPS) {
+            // degenerate triangle: nothing to rasterize
+            return;
+        }
+        bool ccw = (area > 0.0f);
+
+        // top-left test for each edge AB:
+        auto is_top_left = [&](float ax_, float ay_, float bx_, float by_) -> bool {
+            // Choose the conventional top-left rule:
+            // an edge is top-left if it is a "top" edge (ay_ < by_) or if horizontal and runs left (ay_ == by_ and ax_ > bx_)
+            if (ay_ < by_) return true;
+            if (ay_ == by_ && ax_ > bx_) return true;
+            return false;
+        };
+
+        bool tl0 = is_top_left(ax, ay, bx, by); // edge AB
+        bool tl1 = is_top_left(bx, by, cx, cy); // edge BC
+        bool tl2 = is_top_left(cx, cy, ax, ay); // edge CA
+
+        // iterate pixels inside bbox
+        for (int y = min_y; y <= max_y; ++y) {
+            for (int x = min_x; x <= max_x; ++x) {
+                // find pixel center
+                float sx = x + 0.5f;
+                float sy = y + 0.5f;
+
+                // compute edge values
+                float w0 = edge(bx, by, cx, cy, sx, sy); // weight for vertex A
+                float w1 = edge(cx, cy, ax, ay, sx, sy); // weight for vertex B
+                float w2 = edge(ax, ay, bx, by, sx, sy); // weight for vertex C
+
+                // For CCW, point is inside iff all w >= 0 with top-left tie rule
+                bool pass0, pass1, pass2;
+                if (ccw) {
+                    pass0 = (w0 > EPS) || (std::abs(w0) <= EPS && tl0);
+                    pass1 = (w1 > EPS) || (std::abs(w1) <= EPS && tl1);
+                    pass2 = (w2 > EPS) || (std::abs(w2) <= EPS && tl2);
+                    if (!(pass0 && pass1 && pass2)) continue;
+                } else {
+                    // CW: point is inside if all w <= 0
+                    pass0 = (w0 < -EPS) || (std::abs(w0) <= EPS && tl0);
+                    pass1 = (w1 < -EPS) || (std::abs(w1) <= EPS && tl1);
+                    pass2 = (w2 < -EPS) || (std::abs(w2) <= EPS && tl2);
+                    if (!(pass0 && pass1 && pass2)) continue;
+                }
+
+                // point is covered -> compute barycentric weights (using area)
+                // lambda_a = edge(b,c,p) / edge(b,c,a) = w0 / area
+                float inv_area = 1.0f / area;
+                float lambda_a = w0 * inv_area;
+                float lambda_b = w1 * inv_area;
+                float lambda_c = w2 * inv_area;
+
+                // interpolate z linearly
+                float z = lambda_a * az + lambda_b * bz + lambda_c * cz;
+
+                Fragment frag;
+                frag.fb_position.x = sx;
+                frag.fb_position.y = sy;
+                frag.fb_position.z = z;
+                frag.attributes = va.attributes;
+                // derivatives are zeros for flat interpolation
+                for (size_t i = 0; i < frag.derivatives.size(); ++i) {
+                    frag.derivatives[i] = Vec2(0.0f, 0.0f);
+                }
+                emit_fragment(frag);
+            }
+        }
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
 		// A1T5: screen-space smooth triangles
 		// TODO: rasterize triangle (see block comment above this function).

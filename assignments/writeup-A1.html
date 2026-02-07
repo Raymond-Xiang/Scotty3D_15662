@@ -23,7 +23,7 @@ checking that transformations can be correctly applied in the GUI.
 
 Reference image:
 <div class="twentytwenty-container">
-    <img src="A1-writeup/reference/task2-wireframe.png" alt="Rasterize cubes wireframe">
+    <img src="A1-writeup/student/A1T2.png" alt="Rasterize cubes wireframe">
 </div>
 Please replace the above image with your own screenshot of the rasterized wireframe cubes, but all in **RED**.
 This can be done by doing the following:
@@ -39,7 +39,7 @@ checking that rasterizing wireframe meshes will look decent.
 
 Reference image:
 <div class="twentytwenty-container">
-    <img src="A1-writeup/reference/task3-flat-triangles.png" alt="Rasterize flat cubes">
+    <img src="A1-writeup/student/A1T3.png" alt="Rasterize flat cubes">
 </div>
 Please replace the above image with your own screenshot of the rasterized flat triangles cubes, but all in **RED**.
 This can be done by doing the following:
@@ -55,13 +55,13 @@ checking that rasterizing flat triangle meshes will look decent.
 
 You do not need any screenshots for this task. However, please answer the following questions about `media/js3d/A1T4-blend-depth.js3d1`:
 * What combination of blend and depth styles would enable us to see three colors?
-    * Red: Blend: , Depth: 
-    * Green: Blend: , Depth: 
-    * Blue: Blend: , Depth: 
+    * Red: Blend: replace, Depth: always
+    * Green: Blend: replace, Depth: always
+    * Blue: Blend: replace, Depth: always
 * What combination of blend and depth styles would enable us to see five colors?
-    * Red: Blend: , Depth: 
-    * Green: Blend: , Depth: 
-    * Blue: Blend: , Depth: 
+    * Red: Blend: replace, Depth: always
+    * Green: Blend: add, Depth: always
+    * Blue: Blend: add, Depth: always
 
 Do note that there are multiple correct answers to the above two questions - as long as you provide a valid one, you will receive credit.
 
@@ -71,10 +71,20 @@ checking that rasterizing with different blend and depth modes will look decent.
 (##) GenAI Use CHECKPOINT
 
 Which model(s) did you use (e.g., ChatGPT-4, Claude-2, etc.)?
+I used Deepseek V3.2 and Chatgpt-5 during the assignment.
 
 For what purpose(s) did you use GenAI (e.g., brainstorming, code generation, debugging, etc.)?
+1. Explain assignment details
+2. Parse current codebase, Create plans for how to approach each question
+3. Debug my implementation errors
+4. Generate similar but repetitive code (e.g. Bresenham's algorithm for steep and flat lines) 
 
 What was it good at? What was it bad at?
+They are a good resource to consult concepts with, such as Bresenham's algorithm, inscribed diamond, edge function, blend and depth occlusion related knowledge.
+I pretty much had to use them for each part to remind me of our goals so I don't get overwhelmed
+One flaw with these external GenAI tools is the lack of enough context. 
+Something like Github copilot or OpenAI Codex would be able to work directly inside this workspace,
+so they are more aware of contextual info e.g. references to other classes' methods, definition of certain data types
 
 (##) A1T5 FINAL
 
